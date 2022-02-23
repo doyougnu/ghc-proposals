@@ -14,15 +14,15 @@ the link, and delete this bold sentence.**
 `RuntimeRep` is a user facing type that describes the memory representation of
 Haskell types in the runtime system. However, adding new backends to GHC, such
 as a Javascript or JVM backend, requires a way to represent arbitrary objects
-that live in the new backend's runtime system, but are objects that GHC does not
-know about. This leads to two problems; first, there is no `RuntimeRep`
-Constructor that is appropriate to represent such objects, some of which may not
-be pointer-sized. Second, because `RuntimeRep` is user facing, experimentation
-with `RuntimeRep` requires ghc proposals. We seek to use this experimental
-proposal to investigate the design space of `RuntimeRep` and consolidate the
-discussion around it with respect to new backends, such as the upcoming
-Javascript backend. In particular, we suggest treating `RuntimeRep` as unstable
-except for the `BoxedRep` constructor.
+that only live in the new backend's runtime system. This leads to two problems;
+first, there is no `RuntimeRep` Constructor that is appropriate to represent
+such objects because they are by definition platform dependent and may not be
+pointer-sized. Second, because `RuntimeRep` is user facing, experimentation with
+`RuntimeRep` requires ghc proposals. We seek to use this experimental proposal
+to investigate the design space of `RuntimeRep` and consolidate the discussion
+around it with respect to new backends, such as the upcoming Javascript backend.
+In particular, we suggest treating `RuntimeRep` as unstable except for the
+`BoxedRep` constructor.
 
 
 ## Motivation
@@ -39,11 +39,11 @@ the Javascript backend will be the only new backend. Thus, the most trivial
 scenario is each new backend implies a new `RuntimeRep` constructor. In this
 scenario, for each new backend `Bk` becomes we must: 1) extending prim types
 with `BkVal#` and 2) extend `RuntimeRep` with `BkRep`. But such a process
-obviously leads to a bloated `RuntimeRep` and code duplication. The essential
-problem is a matter of design; namely, how to make a polymorphic `RuntimeRep`
-which is platform dependent.
+obviously leads to a bloated `RuntimeRep` and likely to code duplication. The
+essential problem is a matter of design; namely, how to make a polymorphic
+`RuntimeRep` which is platform dependent.
 
-The second scenario obvious scenario is the aggressive use of `{-# LANGUAGE CPP
+The second scenario is the aggressive use of `{-# LANGUAGE CPP
 #-}`. In this scenario, `RuntimeRep` becomes:
 
 ```haskell
@@ -58,8 +58,77 @@ data RuntimeRep
 #endif
 ```
 
+and so on. But then this incurs the maintenance costs and other headaches that
+come with `CPP`. 
+
+The third scenario is to add a prim type `Opaque#` and corresponding runtime
+representation `OpaqueRep` that serves as a handle to any foreign value or
+object in a new runtime for a new backend. But then it is not immediately clear
+what the meaning of an opaque runtime rep is, because this necessarily must be
+defined by the new runtime, and thus must be dependent on the target platform.
+
+Thus we are in the following situation: For new backends we need to extend
+`RuntimeRep`. `RuntimeRep`, specifies how a value of type is represented in
+memory, but it cannot do so in novel platforms who might have different memory
+conventions, and thus _should_ be platform dependent, but it is not. Naive fixes
+then either create a bloated `RuntimeRep` in an attempt to capture all possible
+cases, make aggressive use of `CPP` to perform a check for the host
+architecture, or are something more exotic, such as an existential type or use
+of backpack. In either case, the current design of `RuntimeRep` for new backends
+is unsatisfactory and the design space needs exploration. Thus, we argue that
+`RuntimeRep`, except for `BoxedRep` should be considered unstable.
 
 ## Proposed Change Specification
+
+### Option 1: Bite the bullet and enumerate RuntimeRep
+RuntimeRep becomes
+
+```
+data RuntimeRep = VecRep VecCount VecElem   -- ^ a SIMD vector type
+                | TupleRep [RuntimeRep]     -- ^ An unboxed tuple of the given reps
+                | SumRep [RuntimeRep]       -- ^ An unboxed sum of the given reps
+                | BoxedRep Levity -- ^ boxed; represented by a pointer
+                | ...
+                | JSValRep          -- ^ Javascript values and objects
+                | JVMValRep         -- ^ JVM values and objects
+                | FooValRep         -- ^ Foo values and objects
+```
+
+And all consumers of `RuntimeRep` are updated accordingly. We check for the
+correct platform in the code generator and panic if the platform doesn't line up
+accordingly.
+
+Benefits of this approach are that it is simple, the least invasive change, and
+preserves the majority of consuming code.
+
+### Option 2: Live with the CPP
+RuntimeRep becomes
+
+```
+data RuntimeRep = VecRep VecCount VecElem   -- ^ a SIMD vector type
+                | TupleRep [RuntimeRep]     -- ^ An unboxed tuple of the given reps
+                | SumRep [RuntimeRep]       -- ^ An unboxed sum of the given reps
+                | BoxedRep Levity -- ^ boxed; represented by a pointer
+                | ...
+                | JSValRep          -- ^ Javascript values and objects
+                | JVMValRep         -- ^ JVM values and objects
+                | FooValRep         -- ^ Foo values and objects
+#ifdef javascript_HOST_ARCH
+                | JSRef
+#elif jvm_HOST_ARCH
+                | JVMRef
+#elif beam_HOST_ARCH
+  ... 
+```
+
+And all consumers of `RuntimeRep` are updated accordingly. Benefits of this
+approach are better cohesion in `RuntimeRep`; we have less junk values
+inhabiting the type after the pre-processor, this approach fails fast; should a
+user not sufficiently `CPP` their new-backend-only definitions we can
+immediately short circuit the compilation, the majority of consuming code is
+preserved.
+
+### Option 3: Something more fancy
 
 Specify the change in precise, comprehensive yet concise language. Avoid words
 like "should" or "could". Strive for a complete definition. Your specification
@@ -91,15 +160,6 @@ The specification can, and almost always should, be illustrated with
 give a couple of examples and regard that as the specification! The
 examples should illustrate and elucidate a clearly-articulated
 specification that covers the general case.
-
-## Examples
-
-This section illustrates the specification through the use of examples of the
-language change proposed. It is best to exemplify each point made in the
-specification, though perhaps one example can cover several points. Contrived
-examples are OK here. If the Motivation section describes something that is
-hard to do without this proposal, this is a good place to show how easy that
-thing is to do with the proposal.
 
 ## Effect and Interactions
 
