@@ -19,18 +19,44 @@ know about. This leads to two problems; first, there is no `RuntimeRep`
 Constructor that is appropriate to represent such objects, some of which may not
 be pointer-sized. Second, because `RuntimeRep` is user facing, experimentation
 with `RuntimeRep` requires ghc proposals. We seek to use this experimental
-proposal to investigate the design space of `RuntimeRep` with respect to new
-backends, such as the upcoming Javascript backend. In particular, we suggest
-treating `RuntimeRep` as unstable except for the `BoxedRep` constructor.
+proposal to investigate the design space of `RuntimeRep` and consolidate the
+discussion around it with respect to new backends, such as the upcoming
+Javascript backend. In particular, we suggest treating `RuntimeRep` as unstable
+except for the `BoxedRep` constructor.
 
 
 ## Motivation
 
-Give a strong reason for why the community needs this change. Describe the use
-case as clearly as possible and give an example. Explain how the status quo is
-insufficient or not ideal.
+For the Javascript GHC backend, we require a way to refer to Javascript objects
+from Haskell. This implies adding a primitive type `JSVal#` to GHC for FFI
+support. Similarly, since we now have a new prim type whose memory
+representation is categorically different from other prim types, we must also
+extend `RuntimeRep` with `JSValRep`.
 
-A good Motivation section is often driven by examples and real-world scenarios.
+But this process immediately leads to unsatisfactory scenarios because it is not
+extensible. As GHC becomes more modular, it is unlikely (and undesirable) that
+the Javascript backend will be the only new backend. Thus, the most trivial
+scenario is each new backend implies a new `RuntimeRep` constructor. In this
+scenario, for each new backend `Bk` becomes we must: 1) extending prim types
+with `BkVal#` and 2) extend `RuntimeRep` with `BkRep`. But such a process
+obviously leads to a bloated `RuntimeRep` and code duplication. The essential
+problem is a matter of design; namely, how to make a polymorphic `RuntimeRep`
+which is platform dependent.
+
+The second scenario obvious scenario is the aggressive use of `{-# LANGUAGE CPP
+#-}`. In this scenario, `RuntimeRep` becomes:
+
+```haskell
+data RuntimeRep
+  = ...
+#ifdef javascript_HOST_ARCH
+  | JSRef
+#elif jvm_HOST_ARCH
+  | JVMRef
+#elif beam_HOST_ARCH
+  ... 
+#endif
+```
 
 
 ## Proposed Change Specification
