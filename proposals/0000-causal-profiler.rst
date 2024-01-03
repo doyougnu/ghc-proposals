@@ -26,7 +26,26 @@ integrating and implementing a causal profiler into GHC.
 
 
 Motivation
-----------
+---------
+
+It is often said that laziness *itself* makes performance difficult to reason
+about....
+
+Optimizing GHC compiled Haskell code is a careful art because small changes,
+such as adding a single bang, can have widespread runtime effects throughout a
+sufficiently complicated system. Thus we turn to GHC's profiler to know where
+our system spends its CPU time and the genesis of memory allocations. But GHC's
+profiler relies on a crucial assumption: if we optimize the sections of the
+system where GHC's runtime system spends most of its time, then the system as a
+whole will have improved performance. This assumption works well for
+call-by-value languages, but does how does it far for a call-by-need language?
+Imagine that we have two functions ``foo`` and ``bar``
+
+But GHC's profiler cannot tell us if optimizing a certain section of code will
+result in improved *throughput* and *latency* of the entire system.
+
+
+
 Give a strong reason for why the community needs this change. Describe the use
 case as clearly as possible and give an example. Explain how the status quo is
 insufficient or not ideal.
@@ -36,6 +55,40 @@ A good Motivation section is often driven by examples and real-world scenarios.
 
 Proposed Change Specification
 -----------------------------
+
+We propose to add a new kind of profiler; a *causal profiler* to GHC. The new
+profiler will hide behind a GHC flag such as ``-causal-prof``.
+
+
+What is the big idea behind causal profiling?
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The first causal profiler sensed optimization opportunities at the thread level.
+Imagine one has two threads running in a program, ``thread A`` and ``thread B``.
+To profile, Coz would test what would happen to the system if ``thread A``
+magically experienced a speedup. To do so it slows down ``thread B`` by issuing
+a sleep every time ``thread B`` is selected to run by the scheduler. And
+similarly to observe the effect of ``thread B`` speeding up, it artificially
+will slow down ``thread A``.
+
+How does Coz work?
+^^^^^^^^^^^^^^^^^^
+
+Coz only works on the thread level and requires the program to be compiled with
+DWARF symbols. This allows it to find sections of code that a user has marked in
+the assembly code. It exposes four C macros for users to mark their code. For
+example:
+
+.. code-block:: C
+
+
+
+
+
+
+
+Coz exposes 4 C macros for a user to mark their code. A mark
+
 Specify the change in precise, comprehensive yet concise language. Avoid words
 like "should" or "could". Strive for a complete definition. Your specification
 may include,
@@ -131,7 +184,7 @@ drawbacks that cannot be resolved.
 
 Backward Compatibility
 ----------------------
-Will your proposed change cause any existing programs to change behaviour or
+Will your proposed change cause any existing programs to change behavior or
 stop working? Assess the expected impact on existing code on the following scale:
 
 0. No breakage
